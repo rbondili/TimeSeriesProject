@@ -1,0 +1,675 @@
+---
+title: "MA 611 Project"
+output: html_notebook
+---
+
+```{r}
+install.packages("ggplot2")
+install.packages("forecast")
+install.packages("fpp2")
+install.packages("TSclust")
+install.packages("prophet")
+install.packages("TSEntropies")
+install.packages("curl")
+install.packages("fNonlinear")
+install.packages('doBy')
+install.packages('TSstudio')
+install.packages("nonlinearTseries")
+```
+
+```{r}
+library(ggplot2)
+library(forecast)
+library(fpp2)
+library(TSclust)
+library(prophet)
+library(TSEntropies)
+library(fNonlinear)
+library(dplyr)
+library(doBy)
+library(TSstudio)
+library(nonlinearTseries)
+```
+
+```{r}
+flights=Flight
+head(flights)
+```
+```{r}
+unique(flights$UniqueCarrier)
+```
+
+The data includes the flight details daily for 12 months for the year 2018. It has 20 unique careers:  WN XE YV OH OO UA US DL EV F9 FL HA MQ NW 9E AA AQ AS B6 CO. It also contains the `Month`, `DayofMonth`, `DayofWeek`,  `Departure time`, `Arrival time`, `flight number`, `Origin`, `Destination`, `Distance covered`, `Delays`, `Airtime` etc.
+
+```{r}
+flights_count=flights %>% group_by(UniqueCarrier, ) %>% summarize(count=n())
+arrange(flights_count, desc(count))
+```
+# Top five carriers in terms of number of flights for the year
+WN-Southwest Airlines
+AA-American Airlines
+MQ-Envoy Air
+UA-United Airlines
+OO-Skywest Airlines
+DL-Delta Airlines
+
+
+```{r}
+origin_count=flights %>% group_by(Origin, ) %>% summarize(count=n())
+arrange(origin_count, desc(count))
+```
+## Top 5 cities for number of flights as origin
+ATL-Hartsfield-Jackson Atlanta International Airport
+ORD-Chicago O'Hare International Airport (ORD)
+DFW-Dallas/Fort Worth International Airport
+DEN-Denver International Airport
+LAX-Los Angeles International Airport
+
+
+## Subdivide the flights into 3 categoris:
++ below 4 hrs airtime 
++ 4-10 hours flights 
++ Above 10 hrs flight
+```{r}
+#flights_df=flights[,c('Year', 'Month', 'DayofMonth', "DepTime", "ArrTime", "UniqueCarrier",
+#                      "AirTime", "ArrDelay", "DepDelay", "Origin", "Dest", "Distance", "CarrierDelay")]
+flights_df=mutate(flights, Airtime_cat = ifelse(AirTime %in% 0:240, "4 hr flights",
+                                                   ifelse(AirTime %in% 241:600, "4-10 hr flights","more than 10 hr" )))
+flights_df$date <- as.Date(with(flights_df, paste(Year, Month, DayofMonth, sep="-")), "%Y-%m-%d")
+flights_df=flights_df[, c("date", "UniqueCarrier", 'Airtime_cat', "AirTime", "ArrDelay", "DepDelay", "Distance", "CarrierDelay", "Origin")]
+flights_4hr=subset(flights_df, Airtime_cat=='4 hr flights')
+flights_4plushr=subset(flights_df, Airtime_cat=='4-10 hr flights')
+flights_10plushr=subset(flights_df, Airtime_cat=='more than 10 hr')
+```
+
+
+```{r}
+hist(flights_4hr$DepDelay)
+hist(flights_4plushr$DepDelay)
+hist(flights_10plushr$DepDelay)
+
+```
+
+Remove the outliers in these three different duration flights based on their delay in departure time
+```{r}
+outlier_4h <- boxplot.stats(flights_4hr$DepDelay)$out
+outlier_4plush <- boxplot.stats(flights_4plushr$DepDelay)$out
+outlier_10h <- boxplot.stats(flights_10plushr$DepDelay)$out
+flights_4hr <- flights_4hr[-which(flights_4hr$DepDelay %in% outlier_4h),]
+boxplot(flights_4hr$DepDelay)
+head(flights_4hr)
+```
+
+```{r}
+flights_4plushr <- flights_4plushr[-which(flights_4plushr$DepDelay %in% outlier_4plush),]
+```
+
+```{r}
+write.csv(flights_4hr, file = "flights_4hr.csv")
+write.csv(flights_4plushr, file = "flights_4plushr.csv")
+```
+
+```{r}
+summaryBy(DepDelay ~ UniqueCarrier, data = flights_4hr, 
+          FUN = list(mean, max, min, median, sd))
+```
+
+```{r}
+summaryBy(DepDelay ~ Origin, data = flights_4hr, 
+          FUN = list(mean, max, min, median, sd))
+```
+
+```{r}
+flights_4hr_mean=aggregate(flights_4hr, list(flights_4hr$date, flights_4hr$UniqueCarrier), mean, na.rm=TRUE)
+head(flights_4hr_mean)
+```
+
+```{r}
+flights_WN=subset(flights_4hr_mean, Group.2=='WN')
+flights_AA=subset(flights_4hr_mean, Group.2=='AA')
+flights_MQ=subset(flights_4hr_mean, Group.2=='MQ')
+flights_OO=subset(flights_4hr_mean, Group.2=='OO')
+flights_UA=subset(flights_4hr_mean, Group.2=='UA')
+flights_DL=subset(flights_4hr_mean, Group.2=='DL')
+flights_9E=subset(flights_4hr_mean, Group.2=='9E')
+flights_AQ=subset(flights_4hr_mean, Group.2=='AQ')
+flights_AS=subset(flights_4hr_mean, Group.2=='AS')
+flights_B6=subset(flights_4hr_mean, Group.2=='B6')
+flights_CO=subset(flights_4hr_mean, Group.2=='CO')
+flights_EV=subset(flights_4hr_mean, Group.2=='EV')
+flights_F9=subset(flights_4hr_mean, Group.2=='F9')
+flights_FL=subset(flights_4hr_mean, Group.2=='FL')
+flights_HA=subset(flights_4hr_mean, Group.2=='HA')
+flights_NW=subset(flights_4hr_mean, Group.2=='NW')
+flights_US=subset(flights_4hr_mean, Group.2=='US')
+flights_XE=subset(flights_4hr_mean, Group.2=='XE')
+flights_YV=subset(flights_4hr_mean, Group.2=='YV')
+```
+
+```{r}
+flights_WN_depdelay=flights_WN[,8]
+flights_AA_depdelay=flights_AA[,8]
+flights_OO_depdelay=flights_OO[,8]
+flights_MQ_depdelay=flights_MQ[,8]
+flights_UA_depdelay=flights_UA[,8]
+flights_DL_depdelay=flights_DL[,8]
+flights_9E_depdelay=flights_9E[,8]
+flights_AQ_depdelay=flights_AQ[,8]
+flights_AS_depdelay=flights_AS[,8]
+flights_B6_depdelay=flights_B6[,8]
+flights_CO_depdelay=flights_CO[,8]
+flights_EV_depdelay=flights_EV[,8]
+flights_F9_depdelay=flights_F9[,8]
+flights_FL_depdelay=flights_FL[,8]
+flights_HA_depdelay=flights_HA[,8]
+flights_NW_depdelay=flights_NW[,8]
+flights_US_depdelay=flights_US[,8]
+flights_XE_depdelay=flights_XE[,8]
+flights_YV_depdelay=flights_YV[,8]
+```
+
+```{r}
+head(flights_WN_depdelay)
+```
+
+
+```{r}
+ts_20_depdelay=ts(cbind(flights_WN_depdelay, flights_AA_depdelay, flights_UA_depdelay, flights_OO_depdelay, flights_MQ_depdelay, flights_DL_depdelay, flights_9E_depdelay, flights_AS_depdelay, flights_B6_depdelay, flights_CO_depdelay, flights_EV_depdelay, flights_F9_depdelay, flights_FL_depdelay, flights_NW_depdelay, flights_US_depdelay, flights_XE_depdelay, flights_YV_depdelay), start=c(2008,1), frequency=365)
+```
+
+```{r}
+dissimilarity_18=diss(ts_20_depdelay,METHOD="EUCL")
+dissimilarity_18
+hc.dpred <- hclust(dissimilarity_18)
+plot(hc.dpred,main="Cluster dendogram for Depature Delay of 4hrs")
+
+```
+
+```{r}
+flights_D_mean=aggregate(flights_df, list(flights_df$date, flights_df$UniqueCarrier), mean, na.rm=TRUE)
+head(flights_D_mean)
+```
+
+```{r}
+flightsd_WN=subset(flights_D_mean, Group.2=='WN')
+flightsd_AA=subset(flights_D_mean, Group.2=='AA')
+flightsd_MQ=subset(flights_D_mean, Group.2=='MQ')
+flightsd_OO=subset(flights_D_mean, Group.2=='OO')
+flightsd_UA=subset(flights_D_mean, Group.2=='UA')
+flightsd_DL=subset(flights_D_mean, Group.2=='DL')
+flightsd_9E=subset(flights_D_mean, Group.2=='9E')
+flightsd_AQ=subset(flights_D_mean, Group.2=='AQ')
+flightsd_AS=subset(flights_D_mean, Group.2=='AS')
+flightsd_B6=subset(flights_D_mean, Group.2=='B6')
+flightsd_CO=subset(flights_D_mean, Group.2=='CO')
+flightsd_EV=subset(flights_D_mean, Group.2=='EV')
+flightsd_F9=subset(flights_D_mean, Group.2=='F9')
+flightsd_FL=subset(flights_D_mean, Group.2=='FL')
+flightsd_HA=subset(flights_D_mean, Group.2=='HA')
+flightsd_NW=subset(flights_D_mean, Group.2=='NW')
+flightsd_US=subset(flights_D_mean, Group.2=='US')
+flightsd_XE=subset(flights_D_mean, Group.2=='XE')
+flightsd_YV=subset(flights_D_mean, Group.2=='YV')
+```
+
+
+```{r}
+flightsd_WN_depdelay=flightsd_WN[,8]
+flightsd_AA_depdelay=flightsd_AA[,8]
+flightsd_OO_depdelay=flightsd_OO[,8]
+flightsd_MQ_depdelay=flightsd_MQ[,8]
+flightsd_UA_depdelay=flightsd_UA[,8]
+flightsd_DL_depdelay=flightsd_DL[,8]
+flightsd_9E_depdelay=flightsd_9E[,8]
+flightsd_AQ_depdelay=flightsd_AQ[,8]
+flightsd_AS_depdelay=flightsd_AS[,8]
+flightsd_B6_depdelay=flightsd_B6[,8]
+flightsd_CO_depdelay=flightsd_CO[,8]
+flightsd_EV_depdelay=flightsd_EV[,8]
+flightsd_F9_depdelay=flightsd_F9[,8]
+flightsd_FL_depdelay=flightsd_FL[,8]
+flightsd_HA_depdelay=flightsd_HA[,8]
+flightsd_NW_depdelay=flightsd_NW[,8]
+flightsd_US_depdelay=flightsd_US[,8]
+flightsd_XE_depdelay=flightsd_XE[,8]
+flightsd_YV_depdelay=flightsd_YV[,8]
+```
+
+
+```{r}
+ts_20d_depdelay=ts(cbind(flightsd_WN_depdelay, flightsd_AA_depdelay, flightsd_UA_depdelay, flightsd_OO_depdelay, flightsd_MQ_depdelay, flightsd_DL_depdelay, flightsd_9E_depdelay, flightsd_AS_depdelay, flightsd_B6_depdelay, flightsd_CO_depdelay, flightsd_EV_depdelay, flightsd_F9_depdelay, flightsd_FL_depdelay, flightsd_NW_depdelay, flightsd_US_depdelay, flightsd_XE_depdelay, flightsd_YV_depdelay), start=c(2008,1), frequency=365)
+```
+
+```{r}
+dissimilarity_18d=diss(ts_20d_depdelay,METHOD="EUCL")
+dissimilarity_18d
+hc.dpred <- hclust(dissimilarity_18d)
+plot(hc.dpred,main="Cluster dendogram for Depature Delay")
+```
+
+
+```{r, fig.width=13, fig.height=6}
+ts_depdelay=ts(cbind(flightsd_WN_depdelay, flightsd_AA_depdelay), start=c(2008,1), frequency=365)
+autoplot(ts_depdelay, facets=T)+geom_smooth()
+```
+
+```{r}
+SampEn(flightsd_AA_depdelay)
+```
+Time Series Object for all carriers
+
+```{r}
+flights_WN_depdelay.ts = ts(flights_WN_depdelay, start=c(2008,1), frequency=365)
+flights_AA_depdelay.ts = ts(flights_AA_depdelay, start=c(2008,1), frequency=365)
+```
+
+```{r}
+head(flights_WN_depdelay.ts)
+```
+
+```{r}
+head(flights_AA_depdelay.ts)
+```
+
+
+Train Test Split Time Series Object for all carriers
+
+```{r}
+split_WN <- ts_split(ts.obj = flights_WN_depdelay.ts, sample.out = 66)
+split_AA <- ts_split(ts.obj = flights_AA_depdelay.ts, sample.out = 66)
+```
+
+```{r}
+train_WN <- split_WN$train
+test_WN <- split_WN$test
+train_AA <- split_AA$train
+test_AA <- split_AA$test
+```
+
+Analyis for WN-Southwest Airlines
+
+```{r, fig.width=13, fig.height=6}
+autoplot(ts(cbind(flights_WN[, 'AirTime'], flights_WN[, 'ArrDelay'], flights_WN[, 'DepDelay'], flights_WN[, 'CarrierDelay']), start=c(2018,1), frequency=365), facets=T)+geom_smooth()
+```
+
+```{r}
+ndiffs(train_WN)
+```
+
+```{r}
+nsdiffs(train_WN)
+```
+
+```{r}
+ggAcf(train_WN)
+
+```
+
+```{r}
+ggAcf(diff(train_WN))
+```
+
+```{r}
+ggPacf((train_WN))
+```
+
+```{r}
+ggPacf(diff(train_WN))
+```
+
+```{r}
+SampEn(train_WN)
+```
+
+```{r}
+ets(train_WN)
+```
+
+```{r}
+checkresiduals(ets(train_WN))
+```
+
+```{r}
+autown = auto.arima(train_WN, D=0, max.q = 0,max.P = 0,max.Q = 0, 
+                     seasonal = F, stepwise = F,trace=T)
+```
+
+```{r}
+arima310=Arima(train_WN,c(3,1,0))
+arima310
+```
+
+```{r}
+checkresiduals(arima310)
+
+```
+
+```{r}
+arima310_l=Arima(train_WN,c(3,1,0),lambda = 0)
+arima310_l
+```
+
+```{r}
+checkresiduals(arima310_l)
+```
+
+```{r}
+flights_WN_airtime.ts = ts(flights_WN[, 'AirTime'], start=c(2008,1), frequency=365)
+split_WN_airtime <- ts_split(ts.obj = flights_WN_airtime.ts, sample.out = 66)
+train_WN_airtime <- split_WN_airtime$train
+test_WN_airtime <- split_WN_airtime$test
+
+flights_WN_arrd.ts = ts(flights_WN[, 'ArrDelay'], start=c(2008,1), frequency=365)
+split_WN_arrd <- ts_split(ts.obj = flights_WN_arrd.ts, sample.out = 66)
+train_WN_arrd <- split_WN_arrd$train
+test_WN_arrd <- split_WN_arrd$test
+
+flights_WN_carrierdel.ts = ts(flights_WN[, 'CarrierDelay'], start=c(2008,1), frequency=365)
+split_WN_crrd <- ts_split(ts.obj = flights_WN_carrierdel.ts, sample.out = 66)
+train_WN_crrd <- split_WN_crrd$train
+test_WN_crrd <- split_WN_crrd$test
+
+```
+
+```{r}
+wn_train_xreg=matrix(0,length(train_WN_crrd),3)
+wn_train_xreg[,1]=train_WN_airtime
+wn_train_xreg[,2]=train_WN_arrd
+wn_train_xreg[,3]=train_WN_crrd
+```
+
+
+```{r}
+wn_test_xreg=matrix(0,length(test_WN_crrd),3)
+wn_test_xreg[,1]=test_WN_airtime
+wn_test_xreg[,2]=test_WN_arrd
+wn_test_xreg[,3]=test_WN_crrd
+```
+
+```{r}
+wn_ari310reg=Arima(train_WN,c(3,1,0), lambda = 0,xreg = wn_train_xreg)
+wn_ari310reg
+```
+
+```{r}
+checkresiduals(wn_ari310reg)
+```
+
+```{r}
+wn_ari310reg1=Arima(train_WN,c(3,1,0), lambda = 0,xreg = train_WN_airtime)
+wn_ari310reg1
+```
+
+```{r}
+checkresiduals(wn_ari310reg1)
+```
+
+```{r}
+forecast(arima310)
+```
+
+```{r}
+27.68452 - 16.32477659
+```
+
+```{r}
+accuracy(forecast(ets(train_WN)),flights_WN_depdelay.ts)
+accuracy(forecast(arima310_l), test_WN)
+accuracy(wn_ari310reg, xreg=wn_train_xreg)
+wn_ari310reg_forecast<-forecast(wn_ari310reg, xreg = wn_test_xreg)
+accuracy(wn_ari310reg_forecast$mean,test_WN)
+accuracy(wn_ari310reg1, xreg=train_WN_airtime)
+wn_ari310reg1_forecast<-forecast(wn_ari310reg1, xreg = test_WN_airtime)
+accuracy(wn_ari310reg1_forecast$mean,test_WN)
+```
+
+
+```{r, fig.width=8, fig.height=4}
+autoplot(train_WN)+autolayer(fitted(arima310_l))+autolayer(fitted(ets(train_WN)))+autolayer(fitted(wn_ari310reg))+autolayer(fitted(wn_ari310reg1))+autolayer(forecast(arima310_l,h=50))+autolayer(forecast(ets(train_WN),h=50))+autolayer(forecast(wn_ari310reg,xreg=wn_test_xreg,h=50))+autolayer(forecast(wn_ari310reg1,xreg=test_WN_airtime,h=50))
+
+```
+
+```{r}
+autoplot(train_WN)+autolayer(fitted(arima310_l))+autolayer(forecast(arima310_l,h=50))
+```
+
+```{r}
+checkresiduals(ets(train_WN))
+checkresiduals(arima510)
+checkresiduals(wn_ari510reg)
+checkresiduals(wn_ari510reg1)
+```
+
+```{r}
+bm_wn=baggedModel(train_WN, bootstrapped_series = bld.mbb.bootstrap(train_WN, 15))
+accuracy(forecast(bm_wn),flights_WN_depdelay.ts)
+
+bootstrapped_versions=bld.mbb.bootstrap(train_WN,15)
+boot.ts=ts(as.data.frame(bootstrapped_versions),start = c(2008,1),frequency = 365)
+autoplot(train_WN)+autolayer(boot.ts, colour=TRUE)+autolayer(train_WN, colour=FALSE)+ 
+  autoplot(train_WN)+autolayer(forecast(bm_wn), colour=TRUE)+
+  ylab("Bootstrapped_versions")+guides(colour="none")+
+  ggtitle("15 bootstrapped versions of the Southwest Airlines")
+```
+
+```{r}
+forecast(bm_wn)
+```
+```{r}
+nonlinearityTest(train_WN)
+```
+
+Analyis for AA-American Airlines
+
+```{r, fig.width=13, fig.height=6}
+autoplot(ts(cbind(flights_AA[, 'AirTime'], flights_AA[, 'ArrDelay'], flights_AA[, 'DepDelay'], flights_AA[, 'CarrierDelay']), start=c(2018,1), frequency=365), facets=T)+geom_smooth()
+```
+
+```{r}
+ndiffs(train_AA)
+```
+
+```{r}
+nsdiffs(train_AA)
+```
+
+
+```{r}
+ggAcf(train_AA)
+
+```
+
+```{r}
+ggAcf(diff(train_AA))
+```
+
+```{r}
+ggPacf((train_AA))
+```
+
+```{r}
+SampEn(train_AA)
+```
+
+```{r}
+ets(train_AA)
+```
+
+```{r}
+head(train_AA)
+```
+
+```{r}
+checkresiduals(ets(train_AA))
+```
+
+```{r}
+autoaa = auto.arima(train_AA, D=0, max.q = 0,max.P = 0,max.Q = 0, 
+                     seasonal = F, stepwise = F,trace=T)
+```
+
+```{r}
+arima510=Arima(train_AA,c(5,1,0), lambda = 0)
+arima510
+```
+
+```{r}
+checkresiduals(arima510)
+```
+
+```{r}
+flights_AA_airtime.ts = ts(flights_AA[, 'AirTime'], start=c(2008,1), frequency=365)
+split_AA_airtime <- ts_split(ts.obj = flights_AA_airtime.ts, sample.out = 66)
+train_AA_airtime <- split_AA_airtime$train
+test_AA_airtime <- split_AA_airtime$test
+
+flights_AA_arrd.ts = ts(flights_AA[, 'ArrDelay'], start=c(2008,1), frequency=365)
+split_AA_arrd <- ts_split(ts.obj = flights_AA_arrd.ts, sample.out = 66)
+train_AA_arrd <- split_AA_arrd$train
+test_AA_arrd <- split_AA_arrd$test
+
+flights_AA_carrierdel.ts = ts(flights_AA[, 'CarrierDelay'], start=c(2008,1), frequency=365)
+split_AA_crrd <- ts_split(ts.obj = flights_AA_carrierdel.ts, sample.out = 66)
+train_AA_crrd <- split_AA_crrd$train
+test_AA_crrd <- split_AA_crrd$test
+
+```
+
+```{r}
+aa_train_xreg=matrix(0,length(train_AA_crrd),3)
+aa_train_xreg[,1]=train_AA_airtime
+aa_train_xreg[,2]=train_AA_arrd
+aa_train_xreg[,3]=train_AA_crrd
+```
+
+
+```{r}
+aa_test_xreg=matrix(0,length(test_AA_crrd),3)
+aa_test_xreg[,1]=test_AA_airtime
+aa_test_xreg[,2]=test_AA_arrd
+aa_test_xreg[,3]=test_AA_crrd
+```
+
+```{r}
+aa_ari510reg=Arima(train_AA,c(5,1,0), lambda = 0,xreg = aa_train_xreg)
+aa_ari510reg
+```
+
+```{r}
+checkresiduals(aa_ari510reg)
+```
+
+```{r}
+aa_ari510reg1=Arima(train_AA,c(5,1,0), lambda = 0,xreg = train_AA_airtime)
+aa_ari510reg1
+```
+
+```{r}
+checkresiduals(aa_ari510reg1)
+```
+
+```{r}
+accuracy(forecast(ets(train_AA)),flights_AA_depdelay.ts)
+accuracy(forecast(arima510), test_AA)
+accuracy(aa_ari510reg, xreg=aa_train_xreg)
+aa_ari510reg_forecast<-forecast(aa_ari510reg, xreg = aa_test_xreg)
+accuracy(aa_ari510reg_forecast$mean,test_AA)
+accuracy(aa_ari510reg1, xreg=train_AA_airtime)
+aa_ari510reg1_forecast<-forecast(aa_ari510reg1, xreg = test_AA_airtime)
+accuracy(aa_ari510reg1_forecast$mean,test_AA)
+```
+
+
+```{r, fig.width=8, fig.height=4}
+autoplot(train_AA)+autolayer(fitted(arima510))+autolayer(fitted(ets(train_AA)))+autolayer(fitted(aa_ari510reg))+autolayer(fitted(aa_ari510reg1))+autolayer(forecast(arima510,h=50))+autolayer(forecast(ets(train_AA),h=50))+autolayer(forecast(aa_ari510reg,xreg=aa_test_xreg),h=50)+autolayer(forecast(aa_ari510reg1,xreg=test_AA_airtime),h=50)
+
+```
+
+```{r}
+checkresiduals(ets(train_AA))
+checkresiduals(autoaa)
+checkresiduals(aa_ari400reg)
+checkresiduals(aa_ari400reg1)
+```
+
+```{r}
+bm_aa=baggedModel(train_AA, bootstrapped_series = bld.mbb.bootstrap(train_AA, 15))
+accuracy(forecast(bm_aa),flights_AA_depdelay.ts)
+
+bootstrapped_versions=bld.mbb.bootstrap(train_AA,15)
+boot.ts=ts(as.data.frame(bootstrapped_versions),start = c(2008,1),frequency = 365)
+autoplot(train_AA)+autolayer(boot.ts, colour=TRUE)+autolayer(train_AA, colour=FALSE)+ 
+  ylab("Bootstrapped_versions")+guides(colour="none")+
+  ggtitle("15 bootstrapped versions of the American Airlines")
+```
+
+```{r}
+forecast(bm_aa)
+```
+
+```{r}
+nonlinearityTest(train_AA)
+```
+
+
+
+
+Origin Analysis
+
+```{r}
+summaryBy(DepDelay ~ Origin, data = flights_4hr, 
+          FUN = list(mean, max, min, median, sd))
+```
+
+
+```{r}
+flights_o4hr_mean=aggregate(flights_4hr, list(flights_4hr$date, flights_4hr$Origin), mean, na.rm=TRUE)
+head(flights_o4hr_mean)
+```
+
+```{r}
+flights_ATL=subset(flights_o4hr_mean, Group.2=='ATL')
+flights_ORD=subset(flights_o4hr_mean, Group.2=='ORD')
+flights_DFW=subset(flights_o4hr_mean, Group.2=='DFW')
+flights_DEN=subset(flights_o4hr_mean, Group.2=='DEN')
+flights_LAX=subset(flights_o4hr_mean, Group.2=='LAX')
+
+flights_ATL_depdelay=flights_ATL[, 9]
+flights_ORD_depdelay=flights_ORD[,9]
+flights_DFW_depdelay=flights_DFW[,9]
+flights_LAX_depdelay=flights_LAX[,9]
+flights_DEN_depdelay=flights_DEN[,9]
+
+```
+
+
+```{r, fig.width=13, fig.height=10}
+ts_orig_depdelay=ts(cbind(flights_ATL_depdelay, flights_ORD_depdelay, flights_DFW_depdelay, flights_DEN_depdelay, flights_LAX_depdelay), start=c(2008,1), frequency=365)
+autoplot(ts_orig_depdelay, facets=T)+geom_smooth()
+```
+
+```{r, fig.width=13, fig.height=10}
+autoplot(ts(cbind(flights_WN[, 'Distance'], flights_WN[, 'ArrDelay'], flights_WN[, 'DepDelay'], flights_WN[, 'CarrierDelay']), start=c(2018,1), frequency=365), facets=T)+geom_smooth()
+```
+
+```{r}
+dissimilarity=diss(ts_depdelay,METHOD="EUCL")
+dissimilarity
+hc.dpred <- hclust(dissimilarity)
+plot(hc.dpred,main="Cluster dendogram for Depature Delay for 5 Carriers")
+
+```
+
+
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
